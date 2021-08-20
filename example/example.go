@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"net/http"
+	"time"
 
 	"graceful"
 )
@@ -20,6 +21,11 @@ func main() {
 		Handler: http.HandlerFunc(simpleHandler),
 	}
 
+	graceful.Go(func() {
+		for range time.NewTimer(time.Second * 5).C {
+			// do nothing
+		}
+	})
 	graceful.In(httpShutdown(svr), graceful.GoRoutineTerminator())
 
 	go func() {
