@@ -1,75 +1,76 @@
 package graceful
 
 import (
+	"context"
 	"os"
 	"os/signal"
-	"sync"
-	"syscall"
 )
 
-// Terminator is the interface that wraps the Terminate method.
-//
-// Terminate instructs the implementing object to shut down,
-// close, disposes, or clean up any associated resources.
-type Terminator interface {
-	Terminate()
+type Manager struct {
+	c        Uint64
+	t        Uint64
+	lifeline chan struct{}
 }
 
-// TerminatorFunc defines a type on func() as a convenience
-type TerminatorFunc func()
-
-// Terminate implements the Terminator interface on TerminatorFunc.
-func (f TerminatorFunc) Terminate() {
-	f()
+// New creates a manager with the given context.
+func New() *Manager {
+	return &Manager{lifeline: make(chan struct{})}
 }
 
-var (
-	tt []Terminator
-	mu = sync.Mutex{}
-)
-
-// In registers one or more Terminator(s) to execute in order.
-func In(f ...Terminator) {
-	mu.Lock()
-	defer mu.Unlock()
-
-	tt = append(tt, f...)
-}
-
-var DefaultRunner = RoutineRunner{}
-
-// Go is used to track go func()
-func Go(f func()) {
-	DefaultRunner.Run(f)
+// Go wraps and executes the given function w with a cancellable context.
+func (m *Manager) Go(ctx context.Context, w func(ctx context.Context)) {
+	m.c.Inc()
+	go func() {
+		defer m.c.Dec()
+		w(WithLifeline(ctx, m.lifeline))
+	}()
 }
 
 var sig = make(chan os.Signal, 1)
 
-// DefaultWaitSignals a list of os.Signals to be notified on for the Wait operation.
-var DefaultWaitSignals = []os.Signal{syscall.SIGINT, syscall.SIGTERM}
-
-// Wait listens for the provided notification signals from the os.
-// When the signal is received, all registered terminators are
-// executed in sequence.
+// Wait listens for the notification signals from the os. When a signal
+// is received context.CancelFunc is called for contexts (go routines)
+// being tracked.
 //
-// When the sigs argument is omitted, we wait on the signals defined
-// in DefaultWaitSignals. Finally, tracked go routines are terminated
-// last if they are not registered for termination using In.
-func Wait(sigs ...os.Signal) {
+// Waits on os.Interrupt and os.Kill when sigs argument is omitted.
+func (m *Manager) Wait(sigs ...os.Signal) {
 	if len(sigs) == 0 {
-		sigs = append(sigs, DefaultWaitSignals...)
+		sigs = append(sigs, os.Interrupt, os.Kill)
 	}
 	signal.Notify(sig, sigs...)
 
 	<-sig
-	didTerminateRoutines := false
-	for _, t := range tt {
-		if _, ok := t.(*RoutineRunner); ok && !didTerminateRoutines {
-			didTerminateRoutines = true
-		}
-		t.Terminate()
+	close(m.lifeline)
+	for !m.c.CAS(0, 0) {
+		// wait for routines to exit
 	}
-	if !didTerminateRoutines {
-		GoRoutineTerminator().Terminate()
-	}
+}
+
+// Count returns the number of routines Manager is tracking right now.
+func (m *Manager) Count() uint64 {
+	return m.c.Load()
+}
+
+// mgr Package level instance of Manager.
+var mgr = New()
+
+// Go wraps and executes the given function w with a cancellable context.
+// When the manager's context is cancelled, the cancel function for w is
+// called.
+func Go(ctx context.Context, w func(ctx context.Context)) {
+	mgr.Go(ctx, w)
+}
+
+// Wait listens for the notification signals from the os. When a signal
+// is received context.CancelFunc is called for contexts (go routines)
+// being tracked.
+//
+// Waits on os.Interrupt and os.Kill when sigs argument is omitted.
+func Wait(sigs ...os.Signal) {
+	mgr.Wait(sigs...)
+}
+
+// Count returns the number of routines graceful is tracking right now.
+func Count() uint64 {
+	return mgr.Count()
 }
