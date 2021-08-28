@@ -21,7 +21,7 @@ func simpleHandler(w http.ResponseWriter, req *http.Request) {
 		<-deadline.C
 		to := time.Second * 5
 		newCtx, cf := context.WithTimeout(ctx, to)
-		go func() {
+		graceful.Go(newCtx, func(ctx context.Context) {
 			defer cf()
 			log.Println("Spawned inner go routine from simpleHandler()")
 			k := 0
@@ -35,7 +35,7 @@ func simpleHandler(w http.ResponseWriter, req *http.Request) {
 					return
 				}
 			}
-		}()
+		})
 		log.Println("Completed long-running go routine from simpleHandler()", ctx.Err())
 	})
 }
