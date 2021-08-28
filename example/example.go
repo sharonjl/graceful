@@ -23,7 +23,7 @@ func simpleHandler(w http.ResponseWriter, req *http.Request) {
 		newCtx, cf := context.WithTimeout(ctx, time.Second*5)
 		graceful.Go(newCtx, func(ctx context.Context) {
 			defer cf()
-			log.Println("Spawned inner go routine from simpleHandler()")
+			log.Println("Spawned inner go routine #1 from simpleHandler()")
 			k := 0
 			for {
 				select {
@@ -31,12 +31,34 @@ func simpleHandler(w http.ResponseWriter, req *http.Request) {
 					log.Println("Ticking", k)
 					k++
 				case <-ctx.Done():
-					log.Println("Completed inner go routine from simpleHandler()", ctx.Err())
+					log.Println("Completed inner go routine #1 from simpleHandler()", ctx.Err())
 					return
 				}
 			}
 		})
 		<-newCtx.Done()
+
+		newCtx2, cf := context.WithCancel(ctx)
+		graceful.Go(newCtx2, func(ctx context.Context) {
+			log.Println("Spawned inner go routine #2 from simpleHandler()")
+			k := 0
+			for {
+				select {
+				case <-time.NewTicker(time.Second).C:
+					log.Println("Ticking", k)
+					k++
+					if k == 2 {
+						log.Println("Cancelling ticker", k)
+						cf()
+					}
+				case <-ctx.Done():
+					log.Println("Completed inner go routine #2 from simpleHandler()", ctx.Err())
+					return
+				}
+			}
+		})
+
+		<-newCtx2.Done()
 		log.Println("Completed long-running go routine from simpleHandler()", ctx.Err())
 	})
 }
