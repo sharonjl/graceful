@@ -15,13 +15,13 @@ func simpleHandler(w http.ResponseWriter, req *http.Request) {
 	fmt.Fprintf(w, "hello world\n")
 
 	// Background go routine
-	graceful.Go(func(ctx context.Context) {
+	graceful.Go(context.Background(), func(ctx context.Context) {
 		log.Println("Started long-running go routine from simpleHandler()")
 		deadline := time.NewTimer(time.Second * 5)
 		<-deadline.C
-		to := time.Second * 5
-		newCtx, cf := context.WithTimeout(ctx, to)
-		graceful.Go(func(ctx context.Context) {
+
+		newCtx, cf := context.WithTimeout(ctx, time.Second*5)
+		graceful.Go(newCtx, func(ctx context.Context) {
 			defer cf()
 			log.Println("Spawned inner go routine from simpleHandler()")
 			k := 0
@@ -30,12 +30,13 @@ func simpleHandler(w http.ResponseWriter, req *http.Request) {
 				case <-time.NewTicker(time.Second).C:
 					log.Println("Ticking", k)
 					k++
-				case <-newCtx.Done():
+				case <-ctx.Done():
 					log.Println("Completed inner go routine from simpleHandler()", ctx.Err())
 					return
 				}
 			}
 		})
+		<-newCtx.Done()
 		log.Println("Completed long-running go routine from simpleHandler()", ctx.Err())
 	})
 }
@@ -47,7 +48,7 @@ func main() {
 		Handler: http.HandlerFunc(simpleHandler),
 	}
 
-	graceful.Go(
+	graceful.Go(context.Background(),
 		func(ctx context.Context) {
 			log.Println("Starting server")
 			err := svr.ListenAndServe()
@@ -55,7 +56,7 @@ func main() {
 				panic(err)
 			}
 		})
-	graceful.Go(
+	graceful.Go(context.Background(),
 		func(ctx context.Context) {
 			<-ctx.Done()
 			log.Println("Shutting down server")
@@ -66,11 +67,12 @@ func main() {
 	)
 
 	// Example go routine tracking.
-	graceful.Go(func(ctx context.Context) {
-		deadline := time.NewTimer(time.Second * 5)
-		<-deadline.C
-		log.Println("Completed running go routine from main().", ctx.Err())
-	})
+	graceful.Go(context.Background(),
+		func(ctx context.Context) {
+			deadline := time.NewTimer(time.Second * 5)
+			<-deadline.C
+			log.Println("Completed running go routine from main().", ctx.Err())
+		})
 
 	// Wait for signals from os.
 	graceful.Wait()

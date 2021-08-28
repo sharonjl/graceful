@@ -4,35 +4,25 @@ import (
 	"context"
 	"os"
 	"os/signal"
-	"sync"
 )
 
 type Manager struct {
-	c      Uint64
-	t      Uint64
-	ctx    context.Context
-	cancel context.CancelFunc
-
-	mu        sync.Mutex
-	cancelMap map[uint64]context.CancelFunc
+	c        Uint64
+	t        Uint64
+	lifeline chan struct{}
 }
 
 // New creates a manager with the given context.
 func New() *Manager {
-	ctx, cancel := context.WithCancel(context.Background())
-	return &Manager{ctx: ctx, cancel: cancel, mu: sync.Mutex{}, cancelMap: make(map[uint64]context.CancelFunc)}
+	return &Manager{lifeline: make(chan struct{})}
 }
 
 // Go wraps and executes the given function w with a cancellable context.
-func (m *Manager) Go(w func(ctx context.Context)) {
+func (m *Manager) Go(ctx context.Context, w func(ctx context.Context)) {
 	m.c.Inc()
 	go func() {
-		ctx, cancel := context.WithCancel(m.ctx)
-		defer func() {
-			cancel()
-			m.c.Dec()
-		}()
-		w(ctx)
+		defer m.c.Dec()
+		w(WithLifeline(ctx, m.lifeline))
 	}()
 }
 
@@ -50,7 +40,7 @@ func (m *Manager) Wait(sigs ...os.Signal) {
 	signal.Notify(sig, sigs...)
 
 	<-sig
-	m.cancel()
+	close(m.lifeline)
 	for !m.c.CAS(0, 0) {
 		// wait for routines to exit
 	}
@@ -67,8 +57,8 @@ var mgr = New()
 // Go wraps and executes the given function w with a cancellable context.
 // When the manager's context is cancelled, the cancel function for w is
 // called.
-func Go(w func(ctx context.Context)) {
-	mgr.Go(w)
+func Go(ctx context.Context, w func(ctx context.Context)) {
+	mgr.Go(ctx, w)
 }
 
 // Wait listens for the notification signals from the os. When a signal
