@@ -4,69 +4,61 @@ import (
 	"context"
 	"os"
 	"os/signal"
+	"sync"
 )
 
 type Manager struct {
-	c   atomicInt64
-	ctx context.Context
-	cf  context.CancelFunc
+	c      Uint64
+	t      Uint64
+	ctx    context.Context
+	cancel context.CancelFunc
+
+	mu        sync.Mutex
+	cancelMap map[uint64]context.CancelFunc
 }
 
 // New creates a manager with the given context.
 func New() *Manager {
-	ctx, cf := context.WithCancel(context.Background())
-	return &Manager{
-		ctx: ctx,
-		cf:  cf,
-	}
+	ctx, cancel := context.WithCancel(context.Background())
+	return &Manager{ctx: ctx, cancel: cancel, mu: sync.Mutex{}, cancelMap: make(map[uint64]context.CancelFunc)}
 }
 
 // Go wraps and executes the given function w with a cancellable context.
-func (m *Manager) Go(ctx context.Context, w func(ctx context.Context)) {
-	m.c.inc()
+func (m *Manager) Go(w func(ctx context.Context)) {
+	m.c.Inc()
 	go func() {
-		wCtx, cancel := context.WithCancel(ctx)
+		ctx, cancel := context.WithCancel(m.ctx)
 		defer func() {
 			cancel()
-			m.c.dec()
+			m.c.Dec()
 		}()
-
-		go func() {
-			select {
-			case <-m.ctx.Done():
-				cancel()
-			}
-		}()
-		w(wCtx)
+		w(ctx)
 	}()
 }
 
-var (
-	defaultWaitSignals = []os.Signal{os.Interrupt, os.Kill}
-	sig                = make(chan os.Signal, 1)
-)
+var sig = make(chan os.Signal, 1)
 
-// Wait listens for the notification signals from the os, when a signal
-// is received the manager's context is cancelled.
+// Wait listens for the notification signals from the os. When a signal
+// is received context.CancelFunc is called for contexts (go routines)
+// being tracked.
 //
-// When the sigs argument is omitted, we wait on the signals defined
-// in defaultWaitSignals.
+// Waits on os.Interrupt and os.Kill when sigs argument is omitted.
 func (m *Manager) Wait(sigs ...os.Signal) {
 	if len(sigs) == 0 {
-		sigs = append(sigs, defaultWaitSignals...)
+		sigs = append(sigs, os.Interrupt, os.Kill)
 	}
 	signal.Notify(sig, sigs...)
 
 	<-sig
-	m.cf()
-	for !m.c.isZero() {
+	m.cancel()
+	for !m.c.CAS(0, 0) {
 		// wait for routines to exit
 	}
 }
 
 // Count returns the number of routines Manager is tracking right now.
-func (m *Manager) Count() int64 {
-	return m.c.get()
+func (m *Manager) Count() uint64 {
+	return m.c.Load()
 }
 
 // mgr Package level instance of Manager.
@@ -75,20 +67,20 @@ var mgr = New()
 // Go wraps and executes the given function w with a cancellable context.
 // When the manager's context is cancelled, the cancel function for w is
 // called.
-func Go(ctx context.Context, w func(ctx context.Context)) {
-	mgr.Go(ctx, w)
+func Go(w func(ctx context.Context)) {
+	mgr.Go(w)
 }
 
-// Wait listens for the provided notification signals from the os.
-// When the signal is received the manager's context is cancelled.
+// Wait listens for the notification signals from the os. When a signal
+// is received context.CancelFunc is called for contexts (go routines)
+// being tracked.
 //
-// When the sigs argument is omitted, we wait on the signals defined
-// in defaultWaitSignals.
+// Waits on os.Interrupt and os.Kill when sigs argument is omitted.
 func Wait(sigs ...os.Signal) {
 	mgr.Wait(sigs...)
 }
 
 // Count returns the number of routines graceful is tracking right now.
-func Count() int64 {
+func Count() uint64 {
 	return mgr.Count()
 }

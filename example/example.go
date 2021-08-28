@@ -15,13 +15,13 @@ func simpleHandler(w http.ResponseWriter, req *http.Request) {
 	fmt.Fprintf(w, "hello world\n")
 
 	// Background go routine
-	graceful.Go(context.Background(), func(ctx context.Context) {
+	graceful.Go(func(ctx context.Context) {
 		log.Println("Started long-running go routine from simpleHandler()")
 		deadline := time.NewTimer(time.Second * 5)
 		<-deadline.C
 		to := time.Second * 5
 		newCtx, cf := context.WithTimeout(ctx, to)
-		graceful.Go(newCtx, func(ctx context.Context) {
+		graceful.Go(func(ctx context.Context) {
 			defer cf()
 			log.Println("Spawned inner go routine from simpleHandler()")
 			k := 0
@@ -47,7 +47,7 @@ func main() {
 		Handler: http.HandlerFunc(simpleHandler),
 	}
 
-	graceful.Go(context.Background(),
+	graceful.Go(
 		func(ctx context.Context) {
 			log.Println("Starting server")
 			err := svr.ListenAndServe()
@@ -55,7 +55,7 @@ func main() {
 				panic(err)
 			}
 		})
-	graceful.Go(context.Background(),
+	graceful.Go(
 		func(ctx context.Context) {
 			<-ctx.Done()
 			log.Println("Shutting down server")
@@ -66,7 +66,7 @@ func main() {
 	)
 
 	// Example go routine tracking.
-	graceful.Go(context.Background(), func(ctx context.Context) {
+	graceful.Go(func(ctx context.Context) {
 		deadline := time.NewTimer(time.Second * 5)
 		<-deadline.C
 		log.Println("Completed running go routine from main().", ctx.Err())
