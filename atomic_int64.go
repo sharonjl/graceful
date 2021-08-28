@@ -4,14 +4,18 @@ import "sync/atomic"
 
 type atomicInt64 int64
 
-func (c *atomicInt64) inc() int64 {
-	return atomic.AddInt64((*int64)(c), 1)
+func (i *atomicInt64) get() int64 {
+	return atomic.LoadInt64((*int64)(i))
 }
 
-func (c *atomicInt64) dec() int64 {
-	return atomic.AddInt64((*int64)(c), -1)
+func (i *atomicInt64) inc() int64 {
+	return atomic.AddInt64((*int64)(i), 1)
 }
 
-func (c *atomicInt64) isZero() bool {
-	return atomic.CompareAndSwapInt64((*int64)(c), 0, 0)
+func (i *atomicInt64) dec() int64 {
+	return atomic.AddInt64((*int64)(i), -1)
+}
+
+func (i *atomicInt64) isZero() bool {
+	return atomic.CompareAndSwapInt64((*int64)(i), 0, 0)
 }
