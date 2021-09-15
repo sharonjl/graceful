@@ -4,33 +4,42 @@ import (
 	"context"
 	"os"
 	"os/signal"
-	"sync"
 )
 
 type Manager struct {
-	c      Uint64
-	t      Uint64
-	ctx    context.Context
-	cancel context.CancelFunc
-
-	mu        sync.Mutex
-	cancelMap map[uint64]context.CancelFunc
+	c        Uint64
+	graceCtx context.Context
+	cancel   context.CancelFunc
 }
 
 // New creates a manager with the given context.
 func New() *Manager {
 	ctx, cancel := context.WithCancel(context.Background())
-	return &Manager{ctx: ctx, cancel: cancel, mu: sync.Mutex{}, cancelMap: make(map[uint64]context.CancelFunc)}
+	return &Manager{graceCtx: ctx, cancel: cancel}
 }
 
-// Go wraps and executes the given function w with a cancellable context.
+// Go wraps and executes the given function w with a background context.
 func (m *Manager) Go(w func(ctx context.Context)) {
+	m.GoCtx(context.Background(), w)
+}
+
+// GoCtx wraps and executes the given function w with the context given
+// by the caller.
+func (m *Manager) GoCtx(ctx context.Context, w func(ctx context.Context)) {
 	m.c.Inc()
 	go func() {
-		ctx, cancel := context.WithCancel(m.ctx)
+		ctx, cancel := context.WithCancel(ctx)
 		defer func() {
 			cancel()
 			m.c.Dec()
+		}()
+		go func() {
+			select {
+			case <-m.graceCtx.Done():
+				cancel()
+			case <-ctx.Done():
+				// do nothing
+			}
 		}()
 		w(ctx)
 	}()
@@ -39,8 +48,8 @@ func (m *Manager) Go(w func(ctx context.Context)) {
 var sig = make(chan os.Signal, 1)
 
 // Wait listens for the notification signals from the os. When a signal
-// is received context.CancelFunc is called for contexts (go routines)
-// being tracked.
+// is received the main context's cancel is called forcing a cancellation
+// of all contexts.
 //
 // Waits on os.Interrupt and os.Kill when sigs argument is omitted.
 func (m *Manager) Wait(sigs ...os.Signal) {
@@ -64,11 +73,15 @@ func (m *Manager) Count() uint64 {
 // mgr Package level instance of Manager.
 var mgr = New()
 
-// Go wraps and executes the given function w with a cancellable context.
-// When the manager's context is cancelled, the cancel function for w is
-// called.
+// Go wraps and executes the given function w with a background context.
 func Go(w func(ctx context.Context)) {
 	mgr.Go(w)
+}
+
+// GoCtx wraps and executes the given function w with the context given
+// by the caller.
+func GoCtx(ctx context.Context, w func(ctx context.Context)) {
+	mgr.GoCtx(ctx, w)
 }
 
 // Wait listens for the notification signals from the os. When a signal
